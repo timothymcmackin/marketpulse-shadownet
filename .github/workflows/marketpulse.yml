@@ -1,0 +1,126 @@
+name: CI
+on: push
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+jobs:
+  build-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Use node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+      - run: HARDHAT_VAR_DEPLOYER_PRIVATE_KEY=${{ secrets.DEPLOYER_PRIVATE_KEY }} npx hardhat compile
+        env:
+          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+      - run: HARDHAT_VAR_DEPLOYER_PRIVATE_KEY=${{ secrets.DEPLOYER_PRIVATE_KEY }} npx hardhat test
+        env:
+          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+      - name: Cache build-hardhat-artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-build-hardhat-artifacts
+          path: artifacts
+          retention-days: 1
+  deploy-contract:
+    needs: build-contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Restore build-hardhat-artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ runner.os }}-build-hardhat-artifacts
+          path: artifacts
+      - name: Use node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+      - run: yes | HARDHAT_VAR_DEPLOYER_PRIVATE_KEY=${{ secrets.DEPLOYER_PRIVATE_KEY }}  npx hardhat ignition deploy ignition/modules/Marketpulse.ts --verify --reset --network etherlinkShadownet
+        env:
+          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+      - name: Cache hardhat-ignition
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-deploy-hardhat-ignition
+          path: ignition
+          retention-days: 1
+  build-app:
+    needs: deploy-contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Restore hardhat-artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ runner.os }}-build-hardhat-artifacts
+          path: artifacts
+      - name: Restore hardhat-ignition
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ runner.os }}-deploy-hardhat-ignition
+          path: ignition
+      - name: Use node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+        working-directory: ./app
+      - run: more ./ignition/deployments/chain-127823/deployed_addresses.json
+      - run: npm run build
+        working-directory: ./app
+      - name: Cache app build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-build-app-artifacts
+          path: ./app/dist
+          retention-days: 1
+  deploy-app:
+    needs: build-app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Use node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+      - name: Link to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel link --yes --token=$VERCEL_TOKEN --cwd ./app --project marketpulse
+      - name: Restore hardhat-artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ runner.os }}-build-hardhat-artifacts
+          path: artifacts
+      - name: Restore hardhat-ignition
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ runner.os }}-deploy-hardhat-ignition
+          path: ignition
+      - name: Prepare build for Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --prod --yes --token=$VERCEL_TOKEN --cwd=./app
+      - name: Deploy to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --prod --yes --token=$VERCEL_TOKEN --cwd=./app
