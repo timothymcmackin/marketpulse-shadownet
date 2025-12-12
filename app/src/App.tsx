@@ -410,7 +410,7 @@ export default function App({ thirdwebClient }: AppProps) {
         <div style={{ width: "calc(66vw - 4rem)" }}>
           <img
             style={{ maxHeight: "40vh" }}
-            src="https://zamrokk.github.io/marketpulse/images/graph.png"
+            src="graph.png"
           />
           <hr />
 
